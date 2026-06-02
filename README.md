@@ -42,6 +42,14 @@ For a narrower MinIO + ClickHouse ingestion-stack check:
 MOCK_EMBEDDINGS=true ./scripts/ingestion_stack_smoke_test.sh
 ```
 
+For auth/session coverage:
+
+```sh
+MOCK_EMBEDDINGS=true ./scripts/auth_smoke_test.sh
+```
+
+The auth smoke test covers lowercase email normalization, unique email rejection, Argon2id password storage, 1-hour MySQL-backed sessions, current-user lookup, invalid credentials, expired sessions, and logout revocation.
+
 ## MySQL Migrations
 
 The backend applies MySQL schema migrations on startup before serving traffic. The same migration path can be run manually:
@@ -61,4 +69,5 @@ Current migrations create `users`, `sessions`, and `managed_documents`.
 - `clickhouse/initdb/001_document_pipeline.sql`: ClickHouse schema, vector index, and refreshable materialized view.
 - `pipeline/ingest_runner.py`: Python executable runner called by ClickHouse.
 - `scripts/app_smoke_test.sh`: end-to-end app verification.
+- `scripts/auth_smoke_test.sh`: auth/session verification.
 - `scripts/ingestion_stack_smoke_test.sh`: MinIO + ClickHouse stack verification.

@@ -310,10 +310,11 @@ def login(payload: LoginRequest, response: Response) -> dict[str, Any]:
 
 
 @app.post("/api/auth/logout", status_code=204)
-def logout(response: Response, cv_session: str | None = Cookie(default=None), user: dict[str, Any] = Depends(current_user)) -> Response:
+def logout(cv_session: str | None = Cookie(default=None), user: dict[str, Any] = Depends(current_user)) -> Response:
     with db() as conn, conn.cursor() as cur:
         cur.execute("UPDATE sessions SET revoked_at=%s WHERE token_hash=%s", (utc_now().replace(tzinfo=None), hash_token(cv_session or "")))
         conn.commit()
+    response = Response(status_code=204)
     response.delete_cookie(SESSION_COOKIE, path="/")
     return response
 
