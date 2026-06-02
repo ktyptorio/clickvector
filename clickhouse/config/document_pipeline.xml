@@ -1,0 +1,4 @@
+<clickhouse>
+  <user_scripts_path>/var/lib/clickhouse/user_scripts</user_scripts_path>
+  <allow_executable_user_scripts>true</allow_executable_user_scripts>
+</clickhouse>

@@ -1,0 +1,8 @@
+CONTEXT.md
+docs/
+
+.DS_Store
+.env
+.env.*
+*.pyc
+__pycache__/
