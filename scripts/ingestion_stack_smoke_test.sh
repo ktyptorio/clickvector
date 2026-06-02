@@ -2,10 +2,10 @@
 set -euo pipefail
 
 compose() {
-  docker compose "$@"
+  docker compose -f docker-compose.pipeline.yml "$@"
 }
 
-compose up -d --build --wait mysql minio clickhouse
+compose up -d --build --wait
 
 compose exec -T minio mc ready local >/dev/null
 compose exec -T clickhouse clickhouse-client --password clickhouse --database document_pipeline --query "SELECT 1" >/dev/null

@@ -1,0 +1,60 @@
+name: clickvector_pipeline
+
+services:
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - pipeline-minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  clickhouse:
+    build:
+      context: .
+      dockerfile: clickhouse/Dockerfile.pipeline
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      CLICKHOUSE_DB: document_pipeline
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_HOST: localhost
+      CLICKHOUSE_PORT: "8123"
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: documents
+      MINIO_PREFIX: ""
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      MOCK_EMBEDDINGS: ${MOCK_EMBEDDINGS:-true}
+      CHUNK_SIZE: "1000"
+      CHUNK_OVERLAP: "200"
+      EMBEDDING_MODEL: text-embedding-3-small
+      EMBEDDING_DIMENSION: "1536"
+      MAX_DOCUMENTS_PER_RUN: "10"
+      MAX_ATTEMPTS: "3"
+    ports:
+      - "8123:8123"
+      - "9009:9000"
+    volumes:
+      - pipeline-clickhouse-data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--password", "clickhouse", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  pipeline-minio-data:
+  pipeline-clickhouse-data:
