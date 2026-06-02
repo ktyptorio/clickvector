@@ -7,7 +7,11 @@ button:hover, .upload-button:hover, .mini-file:hover { background: #f1f3f7; }
 .primary:hover { background: #214eb6; }
 .auth-page { min-height: 100vh; display: grid; place-items: center; background: #fff; }
 .auth-panel { width: min(420px, calc(100vw - 32px)); border: 1px solid #d8dce5; border-radius: 8px; padding: 28px; display: grid; gap: 14px; box-shadow: 0 12px 32px rgba(20, 30, 50, .08); }
+.auth-head, .header-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .brand { font-weight: 700; color: #13203a; }
+.health { border: 1px solid #d8dce5; border-radius: 999px; padding: 3px 8px; font-size: 12px; color: #4b5565; background: #fff; white-space: nowrap; }
+.health.ok { border-color: #b9e5c9; color: #116b3a; background: #e7f7ee; }
+.health.down { border-color: #ffcaca; color: #a11c1c; background: #ffecec; }
 .auth-panel h1 { margin: 0; font-size: 24px; }
 label { display: grid; gap: 6px; font-size: 13px; font-weight: 600; }
 input, select, textarea { border: 1px solid #cfd5df; border-radius: 6px; padding: 9px 10px; background: #fff; }

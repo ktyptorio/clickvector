@@ -36,11 +36,29 @@ MOCK_EMBEDDINGS=true ./scripts/smoke_test.sh
 
 The smoke test starts the five-service stack, registers users, uploads PDFs, replaces one PDF, archives another, runs a query, verifies per-user isolation, and prints MySQL/ClickHouse summaries.
 
+For a narrower MinIO + ClickHouse ingestion-stack check:
+
+```sh
+MOCK_EMBEDDINGS=true ./scripts/ingestion_stack_smoke_test.sh
+```
+
+## MySQL Migrations
+
+The backend applies MySQL schema migrations on startup before serving traffic. The same migration path can be run manually:
+
+```sh
+docker compose exec backend python -m app.migrate
+```
+
+Current migrations create `users`, `sessions`, and `managed_documents`.
+
 ## Important Files
 
 - `docker-compose.yml`: five-service runtime.
 - `backend/app/main.py`: FastAPI backend for auth, documents, readiness sync, and query.
+- `backend/app/migrate.py`: manual MySQL migration entrypoint.
 - `frontend/src/App.jsx`: React app shell for Documents and Query.
 - `clickhouse/initdb/001_document_pipeline.sql`: ClickHouse schema, vector index, and refreshable materialized view.
 - `pipeline/ingest_runner.py`: Python executable runner called by ClickHouse.
 - `scripts/app_smoke_test.sh`: end-to-end app verification.
+- `scripts/ingestion_stack_smoke_test.sh`: MinIO + ClickHouse stack verification.

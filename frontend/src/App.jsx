@@ -19,7 +19,12 @@ async function request(path, options = {}) {
   return res.json();
 }
 
-function Auth({ onAuthed }) {
+function HealthBadge({ health }) {
+  const label = health === "ok" ? "Backend healthy" : health === "checking" ? "Checking backend" : "Backend unavailable";
+  return <span className={`health ${health}`}>{label}</span>;
+}
+
+function Auth({ onAuthed, health }) {
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("user@example.com");
   const [password, setPassword] = useState("password123");
@@ -41,7 +46,7 @@ function Auth({ onAuthed }) {
   return (
     <main className="auth-page">
       <form className="auth-panel" onSubmit={submit}>
-        <div className="brand">ClickVector</div>
+        <div className="auth-head"><div className="brand">ClickVector</div><HealthBadge health={health} /></div>
         <h1>{mode === "login" ? "Sign in" : "Create account"}</h1>
         <label>Email<input value={email} onChange={(e) => setEmail(e.target.value)} type="email" /></label>
         <label>Password<input value={password} onChange={(e) => setPassword(e.target.value)} type="password" /></label>
@@ -175,10 +180,14 @@ function QueryView() {
 function App() {
   const [user, setUser] = useState(null);
   const [view, setView] = useState("documents");
+  const [health, setHealth] = useState("checking");
   const title = useMemo(() => view === "documents" ? "Documents" : "Query", [view]);
 
+  useEffect(() => {
+    request("/api/health").then(() => setHealth("ok")).catch(() => setHealth("down"));
+  }, []);
   useEffect(() => { request("/api/auth/me").then((d) => setUser(d.user)).catch(() => {}); }, []);
-  if (!user) return <Auth onAuthed={setUser} />;
+  if (!user) return <Auth onAuthed={setUser} health={health} />;
 
   async function logout() {
     await request("/api/auth/logout", { method: "POST" });
@@ -193,7 +202,7 @@ function App() {
         <button className={view === "query" ? "nav active" : "nav"} onClick={() => setView("query")}>Query</button>
       </aside>
       <main>
-        <header><h1>{title}</h1><div>{user.email} <button onClick={logout}><LogOut size={15} /> Logout</button></div></header>
+        <header><h1>{title}</h1><div className="header-actions"><HealthBadge health={health} /> {user.email} <button onClick={logout}><LogOut size={15} /> Logout</button></div></header>
         {view === "documents" ? <Documents /> : <QueryView />}
       </main>
     </div>
