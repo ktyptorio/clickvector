@@ -1,6 +1,8 @@
 clickhouse-connect==0.8.18
+cryptography==45.0.3
 minio==7.2.15
 openai==1.82.0
 pypdf==5.5.0
 python-docx==1.1.2
+pymysql==1.1.1
 reportlab==4.4.1

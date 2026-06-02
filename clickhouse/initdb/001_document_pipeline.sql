@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS document_ingestions
     bucket String,
     object_key String,
     etag String,
+    user_id String,
+    document_id String,
     document_version_id String,
     source_last_modified DateTime64(3, 'UTC'),
     source_size UInt64,
@@ -24,12 +26,14 @@ CREATE TABLE IF NOT EXISTS document_ingestions
     completed_at Nullable(DateTime64(3, 'UTC'))
 )
 ENGINE = ReplacingMergeTree(record_version)
-ORDER BY (bucket, object_key, etag);
+ORDER BY (user_id, document_id, bucket, object_key, etag);
 
 CREATE TABLE IF NOT EXISTS document_chunks
 (
     chunk_id String,
     document_version_id String,
+    user_id String,
+    document_id String,
     bucket String,
     object_key String,
     etag String,
@@ -44,7 +48,7 @@ CREATE TABLE IF NOT EXISTS document_chunks
     INDEX embedding_hnsw embedding TYPE vector_similarity('hnsw', 'cosineDistance', 1536) GRANULARITY 100000000
 )
 ENGINE = MergeTree
-ORDER BY (bucket, object_key, etag, chunk_index);
+ORDER BY (user_id, document_id, bucket, object_key, etag, chunk_index);
 
 CREATE TABLE IF NOT EXISTS ingestion_runs
 (

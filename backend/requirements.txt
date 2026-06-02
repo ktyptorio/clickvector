@@ -1,0 +1,10 @@
+argon2-cffi==25.1.0
+clickhouse-connect==0.8.18
+cryptography==45.0.3
+fastapi==0.115.12
+email-validator==2.2.0
+minio==7.2.15
+openai==1.82.0
+pymysql==1.1.1
+python-multipart==0.0.20
+uvicorn[standard]==0.34.2

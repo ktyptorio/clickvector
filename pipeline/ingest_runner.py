@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 import traceback
@@ -11,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import clickhouse_connect
+import pymysql
 from docx import Document
 from minio import Minio
 from openai import OpenAI
@@ -18,6 +20,7 @@ from pypdf import PdfReader
 
 
 SUPPORTED_SUFFIXES = {".pdf", ".docx"}
+OBJECT_RE = re.compile(r"^users/([^/]+)/documents/([^/]+)/(.+)$")
 
 
 @dataclass
@@ -25,6 +28,8 @@ class SourceObject:
     bucket: str
     object_key: str
     etag: str
+    user_id: str
+    document_id: str
     source_last_modified: datetime
     source_size: int
     content_type: str
@@ -51,6 +56,11 @@ def iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
 
+def stable_mock_embedding(text: str, dim: int = 1536) -> list[float]:
+    seed = hashlib.sha256(text.encode("utf-8")).digest()
+    return [((seed[i % len(seed)] / 255.0) * 2.0) - 1.0 for i in range(dim)]
+
+
 def get_clickhouse_client():
     return clickhouse_connect.get_client(
         host=os.environ.get("CLICKHOUSE_HOST", "localhost"),
@@ -58,6 +68,18 @@ def get_clickhouse_client():
         username=os.environ.get("CLICKHOUSE_USER", "default"),
         password=os.environ.get("CLICKHOUSE_PASSWORD", ""),
         database=os.environ.get("CLICKHOUSE_DATABASE", os.environ.get("CLICKHOUSE_DB", "document_pipeline")),
+    )
+
+
+def get_mysql_connection():
+    return pymysql.connect(
+        host=os.environ.get("MYSQL_HOST", "mysql"),
+        port=env_int("MYSQL_PORT", 3306),
+        user=os.environ.get("MYSQL_USER", "clickvector"),
+        password=os.environ.get("MYSQL_PASSWORD", "clickvector"),
+        database=os.environ.get("MYSQL_DATABASE", "clickvector"),
+        cursorclass=pymysql.cursors.DictCursor,
+        autocommit=True,
     )
 
 
@@ -77,26 +99,54 @@ def ensure_bucket(client: Minio, bucket: str) -> None:
         client.make_bucket(bucket)
 
 
-def list_supported_objects(client: Minio, bucket: str, prefix: str) -> tuple[list[SourceObject], int]:
+def parse_user_document_key(object_key: str) -> tuple[str, str] | None:
+    match = OBJECT_RE.match(object_key)
+    if not match:
+        return None
+    return match.group(1), match.group(2)
+
+
+def validate_against_mysql(mysql_conn, source: SourceObject) -> bool:
+    with mysql_conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id
+            FROM managed_documents
+            WHERE id=%s
+              AND user_id=%s
+              AND latest_object_key=%s
+              AND latest_etag=%s
+              AND archived_at IS NULL
+            LIMIT 1
+            """,
+            (source.document_id, source.user_id, source.object_key, source.etag),
+        )
+        return cur.fetchone() is not None
+
+
+def list_supported_objects(client: Minio, mysql_conn, bucket: str, prefix: str) -> tuple[list[SourceObject], int]:
     ensure_bucket(client, bucket)
     scanned_count = 0
     supported: list[SourceObject] = []
-    for item in client.list_objects(bucket, prefix=prefix or "", recursive=True):
+    for item in client.list_objects(bucket, prefix=prefix or "users/", recursive=True):
         scanned_count += 1
         suffix = Path(item.object_name).suffix.lower()
-        if suffix not in SUPPORTED_SUFFIXES:
+        parsed = parse_user_document_key(item.object_name)
+        if suffix not in SUPPORTED_SUFFIXES or not parsed:
             continue
         stat = client.stat_object(bucket, item.object_name)
-        supported.append(
-            SourceObject(
-                bucket=bucket,
-                object_key=item.object_name,
-                etag=normalize_etag(stat.etag or item.etag or ""),
-                source_last_modified=(stat.last_modified or item.last_modified).astimezone(timezone.utc),
-                source_size=stat.size or item.size or 0,
-                content_type=stat.content_type or "",
-            )
+        source = SourceObject(
+            bucket=bucket,
+            object_key=item.object_name,
+            etag=normalize_etag(stat.etag or item.etag or ""),
+            user_id=parsed[0],
+            document_id=parsed[1],
+            source_last_modified=(stat.last_modified or item.last_modified).astimezone(timezone.utc),
+            source_size=stat.size or item.size or 0,
+            content_type=stat.content_type or "",
         )
+        if validate_against_mysql(mysql_conn, source):
+            supported.append(source)
     supported.sort(key=lambda obj: (obj.source_last_modified, obj.object_key))
     return supported, scanned_count
 
@@ -106,10 +156,16 @@ def get_ingestion_record(ch, source: SourceObject):
         """
         SELECT status, attempt_count
         FROM document_ingestions FINAL
-        WHERE bucket = %(bucket)s AND object_key = %(object_key)s AND etag = %(etag)s
+        WHERE user_id = %(user_id)s AND document_id = %(document_id)s AND bucket = %(bucket)s AND object_key = %(object_key)s AND etag = %(etag)s
         LIMIT 1
         """,
-        parameters={"bucket": source.bucket, "object_key": source.object_key, "etag": source.etag},
+        parameters={
+            "user_id": source.user_id,
+            "document_id": source.document_id,
+            "bucket": source.bucket,
+            "object_key": source.object_key,
+            "etag": source.etag,
+        },
     ).result_rows
     return rows[0] if rows else None
 
@@ -178,9 +234,11 @@ def chunk_text(text: str, chunk_size: int, chunk_overlap: int) -> list[tuple[int
     return chunks
 
 
-def embed_chunks(openai_client: OpenAI, model: str, chunks: list[str]) -> list[list[float]]:
+def embed_chunks(openai_client: OpenAI | None, model: str, chunks: list[str], dimension: int) -> list[list[float]]:
     if not chunks:
         return []
+    if os.environ.get("MOCK_EMBEDDINGS", "false").lower() == "true":
+        return [stable_mock_embedding(chunk, dimension) for chunk in chunks]
     response = openai_client.embeddings.create(model=model, input=chunks)
     return [item.embedding for item in response.data]
 
@@ -199,6 +257,8 @@ def insert_ingestion(ch, source: SourceObject, document_version_id: str, status:
                 source.bucket,
                 source.object_key,
                 source.etag,
+                source.user_id,
+                source.document_id,
                 document_version_id,
                 source.source_last_modified,
                 source.source_size,
@@ -217,6 +277,8 @@ def insert_ingestion(ch, source: SourceObject, document_version_id: str, status:
             "bucket",
             "object_key",
             "etag",
+            "user_id",
+            "document_id",
             "document_version_id",
             "source_last_modified",
             "source_size",
@@ -240,7 +302,7 @@ def delete_chunks(ch, document_version_id: str) -> None:
     )
 
 
-def process_source(ch, minio_client: Minio, openai_client: OpenAI, source: SourceObject, attempt_count: int, config: dict) -> int:
+def process_source(ch, minio_client: Minio, openai_client: OpenAI | None, source: SourceObject, attempt_count: int, config: dict) -> int:
     document_version_id = sha256_hex(f"{source.bucket}\0{source.object_key}\0{source.etag}")
     insert_ingestion(ch, source, document_version_id, "processing", attempt_count, "", 0, None)
     delete_chunks(ch, document_version_id)
@@ -256,11 +318,9 @@ def process_source(ch, minio_client: Minio, openai_client: OpenAI, source: Sourc
 
     chunks = chunk_text(text, config["chunk_size"], config["chunk_overlap"])
     chunk_texts = [chunk for _, _, chunk in chunks]
-    embeddings = embed_chunks(openai_client, config["embedding_model"], chunk_texts)
+    embeddings = embed_chunks(openai_client, config["embedding_model"], chunk_texts, config["embedding_dimension"])
     if embeddings and len(embeddings[0]) != config["embedding_dimension"]:
-        raise ValueError(
-            f"Embedding dimension mismatch: expected {config['embedding_dimension']}, got {len(embeddings[0])}"
-        )
+        raise ValueError(f"Embedding dimension mismatch: expected {config['embedding_dimension']}, got {len(embeddings[0])}")
 
     rows = []
     for index, ((start, end, chunk), embedding) in enumerate(zip(chunks, embeddings)):
@@ -270,6 +330,8 @@ def process_source(ch, minio_client: Minio, openai_client: OpenAI, source: Sourc
             [
                 chunk_id,
                 document_version_id,
+                source.user_id,
+                source.document_id,
                 source.bucket,
                 source.object_key,
                 source.etag,
@@ -290,6 +352,8 @@ def process_source(ch, minio_client: Minio, openai_client: OpenAI, source: Sourc
             column_names=[
                 "chunk_id",
                 "document_version_id",
+                "user_id",
+                "document_id",
                 "bucket",
                 "object_key",
                 "etag",
@@ -312,7 +376,7 @@ def run():
     run_id = str(uuid.uuid4())
     config = {
         "bucket": os.environ.get("MINIO_BUCKET", "documents"),
-        "prefix": os.environ.get("MINIO_PREFIX", ""),
+        "prefix": os.environ.get("MINIO_PREFIX", "users/") or "users/",
         "chunk_size": env_int("CHUNK_SIZE", 1000),
         "chunk_overlap": env_int("CHUNK_OVERLAP", 200),
         "embedding_model": os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small"),
@@ -325,13 +389,12 @@ def run():
     status = "completed"
     try:
         ch = get_clickhouse_client()
+        mysql_conn = get_mysql_connection()
         minio_client = get_minio_client()
-        openai_client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        openai_client = None if os.environ.get("MOCK_EMBEDDINGS", "false").lower() == "true" else OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-        objects, scanned_count = list_supported_objects(minio_client, config["bucket"], config["prefix"])
-        candidates, skipped_count = choose_candidates(
-            ch, objects, config["max_documents_per_run"], config["max_attempts"]
-        )
+        objects, scanned_count = list_supported_objects(minio_client, mysql_conn, config["bucket"], config["prefix"])
+        candidates, skipped_count = choose_candidates(ch, objects, config["max_documents_per_run"], config["max_attempts"])
 
         for source in candidates:
             record = get_ingestion_record(ch, source)
@@ -343,9 +406,9 @@ def run():
             except Exception as exc:
                 failed_count += 1
                 status = "partial_failed"
-                message = str(exc)[:2000]
                 print(traceback.format_exc(), file=sys.stderr)
-                insert_ingestion(ch, source, document_version_id, "failed", attempt_count, message, 0, None)
+                insert_ingestion(ch, source, document_version_id, "failed", attempt_count, str(exc)[:2000], 0, None)
+        mysql_conn.close()
         if failed_count and processed_count == 0:
             status = "failed"
     except Exception as exc:
@@ -353,13 +416,12 @@ def run():
         error_message = str(exc)[:2000]
         print(traceback.format_exc(), file=sys.stderr)
 
-    finished_at = utc_now()
     print(
         json.dumps(
             {
                 "run_id": run_id,
                 "started_at": iso(started_at),
-                "finished_at": iso(finished_at),
+                "finished_at": iso(utc_now()),
                 "status": status,
                 "scanned_count": scanned_count,
                 "processed_count": processed_count,
