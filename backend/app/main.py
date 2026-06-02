@@ -389,6 +389,12 @@ def get_docs(user_id: str, where: str = "", params: tuple[Any, ...] = ()) -> lis
         return list(cur.fetchall())
 
 
+def get_document_row_without_sync(user_id: str, document_id: str) -> dict[str, Any] | None:
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("SELECT * FROM managed_documents WHERE user_id=%s AND id=%s AND archived_at IS NULL", (user_id, document_id))
+        return cur.fetchone()
+
+
 @app.get("/api/documents")
 def list_documents(
     q: str | None = None,
@@ -450,7 +456,7 @@ async def create_document(file: UploadFile = File(...), display_name: str | None
         )
         conn.commit()
     trigger_refresh()
-    doc = get_docs(user["id"], "AND id=%s", (document_id,))[0]
+    doc = get_document_row_without_sync(user["id"], document_id)
     return {"document": row_to_document(doc)}
 
 

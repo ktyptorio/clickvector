@@ -65,16 +65,21 @@ function Documents() {
   const [docs, setDocs] = useState([]);
   const [q, setQ] = useState("");
   const [readiness, setReadiness] = useState("all");
+  const [limit, setLimit] = useState(25);
+  const [offset, setOffset] = useState(0);
+  const [page, setPage] = useState({ limit: 25, offset: 0, total: 0 });
   const [message, setMessage] = useState("");
 
-  async function load() {
-    const params = new URLSearchParams({ readiness, limit: "50", offset: "0" });
+  async function load(nextOffset = offset) {
+    const params = new URLSearchParams({ readiness, limit: String(limit), offset: String(nextOffset) });
     if (q) params.set("q", q);
     const data = await request(`/api/documents?${params}`);
     setDocs(data.items);
+    setPage(data.page);
+    setOffset(data.page.offset);
   }
 
-  useEffect(() => { load().catch((e) => setMessage(e.message)); }, [readiness]);
+  useEffect(() => { setOffset(0); load(0).catch((e) => setMessage(e.message)); }, [readiness, limit]);
 
   async function upload(file) {
     if (!file) return;
@@ -83,7 +88,7 @@ function Documents() {
     form.append("file", file);
     await request("/api/documents", { method: "POST", body: form });
     setMessage("Uploaded. Ingestion is running.");
-    await load();
+    await load(0);
   }
 
   async function replaceDoc(id, file) {
@@ -91,31 +96,37 @@ function Documents() {
     const form = new FormData();
     form.append("file", file);
     await request(`/api/documents/${id}/replace`, { method: "POST", body: form });
-    await load();
+    await load(offset);
   }
 
   async function renameDoc(id, current) {
     const next = window.prompt("Rename document", current);
     if (!next) return;
     await request(`/api/documents/${id}`, { method: "PATCH", body: JSON.stringify({ display_name: next }) });
-    await load();
+    await load(offset);
   }
 
   async function archiveDoc(id) {
     if (!window.confirm("Archive this document?")) return;
     await request(`/api/documents/${id}`, { method: "DELETE" });
-    await load();
+    await load(offset);
   }
+
+  const canPrev = page.offset > 0;
+  const canNext = page.offset + page.limit < page.total;
 
   return (
     <section>
       <div className="toolbar">
         <label className="upload-button"><Upload size={16} /> Upload<input type="file" accept=".pdf,.docx" onChange={(e) => upload(e.target.files[0])} /></label>
-        <div className="searchbox"><Search size={16} /><input placeholder="Search documents" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && load()} /></div>
+        <div className="searchbox"><Search size={16} /><input placeholder="Search documents" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && load(0)} /></div>
         <select value={readiness} onChange={(e) => setReadiness(e.target.value)}>
           <option value="all">All</option><option value="processing">Processing</option><option value="ready">Ready</option><option value="failed">Failed</option>
         </select>
-        <button onClick={load}><RefreshCw size={16} /></button>
+        <select value={limit} onChange={(e) => setLimit(Number(e.target.value))}>
+          {[10, 25, 50].map((n) => <option key={n} value={n}>{n} rows</option>)}
+        </select>
+        <button onClick={() => load(offset)}><RefreshCw size={16} /></button>
       </div>
       {message && <div className="notice">{message}</div>}
       <div className="table">
@@ -135,6 +146,11 @@ function Documents() {
           </div>
         ))}
         {!docs.length && <div className="empty">No active documents.</div>}
+      </div>
+      <div className="pager">
+        <span>{page.total ? `${page.offset + 1}-${Math.min(page.offset + page.limit, page.total)} of ${page.total}` : "0 documents"}</span>
+        <button disabled={!canPrev} onClick={() => load(Math.max(0, page.offset - page.limit))}>Previous</button>
+        <button disabled={!canNext} onClick={() => load(page.offset + page.limit)}>Next</button>
       </div>
     </section>
   );
