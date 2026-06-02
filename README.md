@@ -42,4 +42,3 @@ The smoke test:
 - `pipeline/ingest_runner.py`: executable runner called by ClickHouse.
 - `scripts/seed_minio.py`: PDF seed/update helper.
 - `scripts/smoke_test.sh`: end-to-end verification.
-- `docs/design/ingestion-pipeline.md`: design summary.
