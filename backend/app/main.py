@@ -483,13 +483,13 @@ def rename_document(document_id: str, payload: RenameDocumentRequest, user: dict
 
 @app.post("/api/documents/{document_id}/replace")
 async def replace_document(document_id: str, file: UploadFile = File(...), user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
-    data = await file.read()
-    filename, content_type = validate_upload(file, data)
     with db() as conn, conn.cursor() as cur:
         cur.execute("SELECT * FROM managed_documents WHERE id=%s AND user_id=%s AND archived_at IS NULL", (document_id, user["id"]))
         doc = cur.fetchone()
     if not doc:
         raise error(404, "document_not_found", "Document not found.")
+    data = await file.read()
+    filename, content_type = validate_upload(file, data)
     object_key = f"users/{user['id']}/documents/{document_id}/{filename}"
     client = minio_client()
     bucket = ensure_bucket(client)
